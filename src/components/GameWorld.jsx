@@ -63,6 +63,43 @@ function drawWire(ctx, verts, edges, rx, ry, scale, cx, cy, col, alpha, lw) {
     ctx.restore();
 }
 
+// ── Navigation helpers ────────────────────────────────────────────────────────
+// World → screen
+function w2s(wx, wy, cam, CW, CH) {
+    return [(wx - cam.x) * cam.z + CW / 2, (wy - cam.y) * cam.z + CH / 2];
+}
+// Clamp a (possibly off-screen) screen point to the viewport edge with padding
+function vpEdge(sx, sy, CW, CH, pad) {
+    const cx = CW / 2, cy = CH / 2;
+    const dx = sx - cx, dy = sy - cy;
+    if (!dx && !dy) return [cx, cy];
+    const t = Math.min((CW / 2 - pad) / Math.abs(dx), (CH / 2 - pad) / Math.abs(dy));
+    return [cx + dx * t, cy + dy * t];
+}
+// Off-screen directional arrow at (ex,ey) pointing at angle ang; dashed = event horizon
+function navArrow(ctx, ex, ey, ang, dist, dashed, col) {
+    // Arrow body
+    ctx.save();
+    ctx.translate(ex, ey); ctx.rotate(ang);
+    ctx.strokeStyle = col; ctx.fillStyle = col;
+    ctx.lineWidth = dashed ? 1 : 1.5;
+    ctx.globalAlpha = 0.9;
+    if (dashed) ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(2, -5); ctx.lineTo(2, 5); ctx.closePath();
+    dashed ? ctx.stroke() : ctx.fill();
+    ctx.beginPath(); ctx.moveTo(2, 0); ctx.lineTo(-13, 0); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+    // Distance label — perpendicular to arrow direction
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = col;
+    ctx.font = "9px 'Orbitron',sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(String(dist), ex - Math.sin(ang) * 18, ey + Math.cos(ang) * 18);
+    ctx.restore();
+}
+
 export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
     const cvs = useRef(null);
     const gfxCvs = useRef(null);
@@ -416,6 +453,15 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
             const g = G.current;
             const { ships, bullets, rocks, parts, cam, escT, frame, buoys } = g;
 
+            // Pre-compute nav targets once per frame
+            const navAlive = ships.filter(s => s.alive);
+            const navCX = navAlive.length ? navAlive.reduce((a, s) => a + s.x, 0) / navAlive.length : cam.x;
+            const navCY = navAlive.length ? navAlive.reduce((a, s) => a + s.y, 0) / navAlive.length : cam.y;
+            const nextWP = navAlive.length
+                ? buoys.filter(b => !b.active).sort((a, b) =>
+                    Math.hypot(a.x - navCX, a.y - navCY) - Math.hypot(b.x - navCX, b.y - navCY))[0]
+                : null;
+
             ctx.fillStyle = isVex ? "#000" : "#020409";
             ctx.fillRect(0, 0, CW, CH);
             octx.clearRect(0, 0, CW, CH);
@@ -512,6 +558,31 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
                 isVex ? ctx.stroke() : (ctx.fillStyle = buoyCol, ctx.fill());
                 ctx.shadowBlur = 0; ctx.globalAlpha = 1;
             });
+
+            // ── Next-waypoint target reticle (world space) ────────────────────
+            if (nextWP) {
+                const wpCol = isVex ? VEX_COL : "#ffcc44";
+                const tr = 24 + 3 * Math.sin(frame * 0.07);
+                ctx.save();
+                ctx.strokeStyle = wpCol;
+                ctx.lineWidth = isVex ? 1 : 1.5;
+                ctx.globalAlpha = 0.85;
+                if (!isVex) { ctx.shadowColor = wpCol; ctx.shadowBlur = 8; }
+                // Dashed orbit ring
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath(); ctx.arc(nextWP.x, nextWP.y, tr, 0, Math.PI * 2); ctx.stroke();
+                ctx.setLineDash([]);
+                // Four axis ticks extending outward
+                [0, Math.PI / 2, Math.PI, Math.PI * 1.5].forEach(a => {
+                    const cos = Math.cos(a), sin = Math.sin(a);
+                    ctx.beginPath();
+                    ctx.moveTo(nextWP.x + cos * (tr + 2), nextWP.y + sin * (tr + 2));
+                    ctx.lineTo(nextWP.x + cos * (tr + 9), nextWP.y + sin * (tr + 9));
+                    ctx.stroke();
+                });
+                ctx.shadowBlur = 0;
+                ctx.restore();
+            }
 
             rocks.forEach(r => {
                 // Motion blur trail (non-vectrex, moving rocks)
@@ -803,6 +874,56 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
                     ctx.shadowBlur = 0;
                 }
             });
+
+            // ── Navigation indicators (screen space) ─────────────────────────
+            if (navAlive.length > 0) {
+                const wpCol  = isVex ? VEX_COL : "#ffcc44";
+                const ehCol  = isVex ? VEX_COL : "#ffcc44";
+                const PAD = 42; // px from viewport edge
+
+                // — Next waypoint —
+                if (nextWP) {
+                    const distWP = Math.round(Math.hypot(nextWP.x - navCX, nextWP.y - navCY));
+                    const [wpSX, wpSY] = w2s(nextWP.x, nextWP.y, cam, CW, CH);
+                    const wpOff = wpSX < -30 || wpSX > CW + 30 || wpSY < -30 || wpSY > CH + 30;
+                    if (wpOff) {
+                        // Solid edge arrow for waypoint
+                        const [ex, ey] = vpEdge(wpSX, wpSY, CW, CH, PAD);
+                        navArrow(ctx, ex, ey, Math.atan2(wpSY - CH / 2, wpSX - CW / 2), distWP, false, wpCol);
+                    } else {
+                        // On-screen: distance label above the reticle
+                        const [wpSXl, wpSYl] = w2s(nextWP.x, nextWP.y, cam, CW, CH);
+                        ctx.save();
+                        ctx.fillStyle = wpCol; ctx.globalAlpha = 0.9;
+                        ctx.font = "9px 'Orbitron',sans-serif";
+                        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+                        if (!isVex) { ctx.shadowColor = wpCol; ctx.shadowBlur = 6; }
+                        ctx.fillText(String(distWP), wpSXl, wpSYl - (24 + 12) * cam.z);
+                        ctx.shadowBlur = 0;
+                        ctx.restore();
+                    }
+                }
+
+                // — Event horizon —
+                const distEH = Math.max(0, Math.round(Math.hypot(EX - navCX, EY - navCY) - ER));
+                const [ehSX, ehSY] = w2s(EX, EY, cam, CW, CH);
+                const ehOff = ehSX < -30 || ehSX > CW + 30 || ehSY < -30 || ehSY > CH + 30;
+                if (ehOff) {
+                    // Dashed edge arrow for event horizon
+                    const [ex, ey] = vpEdge(ehSX, ehSY, CW, CH, PAD);
+                    navArrow(ctx, ex, ey, Math.atan2(ehSY - CH / 2, ehSX - CW / 2), distEH, true, ehCol);
+                } else {
+                    // On-screen: distance label above the outermost ring
+                    ctx.save();
+                    ctx.fillStyle = ehCol; ctx.globalAlpha = 0.85;
+                    ctx.font = "9px 'Orbitron',sans-serif";
+                    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+                    if (!isVex) { ctx.shadowColor = ehCol; ctx.shadowBlur = 6; }
+                    ctx.fillText(distEH === 0 ? "ENTER" : String(distEH), ehSX, ehSY - (ER * 1.5 + 10) * cam.z);
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                }
+            }
 
             // Override tether button (appears after 5 s at max tether distance)
             const { tetherOverride: tOvr, tetherMaxT: tMaxT } = g;
