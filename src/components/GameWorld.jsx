@@ -3,13 +3,65 @@ import {
     WW, WH, EX, EY, ER, MAX_HP, DRAG, TURN, THR, MAX_SPD,
     BSPD, BLIFE, FIRE_CD, INV_T, PROX, ESCAPE_HOLD, RESPAWN_T,
     SPAWN_INT, MAX_ROC, INIT_ROC, TIERS, FACTIONS, BUOYS, STARS,
-    R, L, D, AD, poly, mkRock, mkShip, sparks, AudioSys
+    R, L, D, AD, poly, mkRock, mkShip, sparks, AudioSys,
+    TETHER_FLASH_T, TETHER_PULL
 } from '../gameLogic';
 
 // Slower, more realistic movement
 const REAL_THR = THR * 0.65;
 const REAL_MAX_SPD = MAX_SPD * 0.75;
 const REAL_DRAG = 0.992; // Less drag for more space feel
+
+// ── 3-D shield geometry ───────────────────────────────────────────────────────
+const _PHI = (1 + Math.sqrt(5)) / 2, _IP = 1 / _PHI, _S3 = Math.sqrt(3);
+
+// Cube: 8 vertices (±1,±1,±1), 12 edges
+const CUBE_V = [
+    [-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],
+    [-1,-1, 1],[1,-1, 1],[1,1, 1],[-1,1, 1]
+];
+const CUBE_E = [
+    [0,1],[1,2],[2,3],[3,0],
+    [4,5],[5,6],[6,7],[7,4],
+    [0,4],[1,5],[2,6],[3,7]
+];
+
+// Dodecahedron: 20 vertices, 30 edges  (circumradius = √3 × scale)
+const DODEC_V = [
+    [ 1, 1, 1],[ 1, 1,-1],[ 1,-1, 1],[ 1,-1,-1],
+    [-1, 1, 1],[-1, 1,-1],[-1,-1, 1],[-1,-1,-1],
+    [ 0, _IP, _PHI],[ 0, _IP,-_PHI],[ 0,-_IP, _PHI],[ 0,-_IP,-_PHI],
+    [_IP, _PHI, 0],[_IP,-_PHI, 0],[-_IP, _PHI, 0],[-_IP,-_PHI, 0],
+    [_PHI, 0, _IP],[_PHI, 0,-_IP],[-_PHI, 0, _IP],[-_PHI, 0,-_IP]
+];
+const DODEC_E = [
+    [0,8],[0,12],[0,16],[1,9],[1,12],[1,17],[2,10],[2,13],[2,16],[3,11],[3,13],[3,17],
+    [4,8],[4,14],[4,18],[5,9],[5,14],[5,19],[6,10],[6,15],[6,18],[7,11],[7,15],[7,19],
+    [8,10],[9,11],[12,14],[13,15],[16,17],[18,19]
+];
+
+// Project a 3-D vertex [x,y,z] with Y-then-X rotation and orthographic output
+function proj3(vx, vy, vz, rx, ry) {
+    const x1 = vx * Math.cos(ry) + vz * Math.sin(ry);
+    const z1 = -vx * Math.sin(ry) + vz * Math.cos(ry);
+    const y2 = vy * Math.cos(rx) - z1 * Math.sin(rx);
+    return [x1, y2];
+}
+
+// Draw a wireframe shape in world-space at (cx,cy)
+function drawWire(ctx, verts, edges, rx, ry, scale, cx, cy, col, alpha, lw) {
+    const pts = verts.map(([vx, vy, vz]) => {
+        const [px, py] = proj3(vx, vy, vz, rx, ry);
+        return [cx + px * scale, cy + py * scale];
+    });
+    ctx.save();
+    ctx.strokeStyle = col; ctx.globalAlpha = alpha; ctx.lineWidth = lw;
+    ctx.shadowColor = col; ctx.shadowBlur = lw * 4;
+    edges.forEach(([a, b]) => {
+        ctx.beginPath(); ctx.moveTo(pts[a][0], pts[a][1]); ctx.lineTo(pts[b][0], pts[b][1]); ctx.stroke();
+    });
+    ctx.restore();
+}
 
 export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
     const cvs = useRef(null);
@@ -18,6 +70,7 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
     const keys = useRef(new Set());
     const audioRef = useRef(null);
     const raf = useRef(null);
+    const overrideBtnRef = useRef(null);
 
     const CTRL1 = { rL: "KeyA", rR: "KeyD", thr: "KeyW", fire: "Space" };
     const CTRL2 = { rL: "ArrowLeft", rR: "ArrowRight", thr: "ArrowUp", fire: "ShiftRight" };
@@ -48,7 +101,9 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
             cam: { x: x, y: y, z: 1, tx: x, ty: y, tz: 1, sh: 0 },
             escT: 0, spawnT: 0, frame: 0,
             buoys: BUOYS.map(b => ({ ...b, active: false })),
-            lastSave: { x: x, y: y }
+            lastSave: { x: x, y: y },
+            tetherOverride: false, tetherMaxT: 0,
+            shieldAng: { rx: 0, ry: 0 }
         };
     }
 
@@ -74,6 +129,22 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
         window.addEventListener("keydown", onKD);
         window.addEventListener("keyup", onKU);
 
+        const onClick = e => {
+            const g = G.current;
+            if (!g) return;
+            const [s0, s1] = g.ships;
+            if (!s0.alive || !s1.alive || g.tetherOverride || g.tetherMaxT < TETHER_FLASH_T) return;
+            const rect = canvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            const btn = overrideBtnRef.current;
+            if (btn && mx >= btn.x && mx <= btn.x + btn.w && my >= btn.y && my <= btn.y + btn.h) {
+                g.tetherOverride = true;
+                g.tetherMaxT = 0;
+            }
+        };
+        canvas.addEventListener("click", onClick);
+
         function update() {
             if (!G.current) return;
             const g = G.current;
@@ -81,7 +152,39 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
             const { ships, bullets, rocks, parts, cam, buoys } = g;
             const k = keys.current;
             const [s0, s1] = ships;
-            const allied = s0.alive && s1.alive && D(s0, s1) < PROX;
+            const dist = D(s0, s1);
+            const bothAlive = s0.alive && s1.alive;
+
+            // Auto-reconnect tether when ships return within range
+            if (bothAlive && dist < PROX && g.tetherOverride) {
+                g.tetherOverride = false;
+            }
+
+            // Track time spent at or beyond tether limit
+            if (bothAlive && !g.tetherOverride) {
+                if (dist >= PROX * 0.9) g.tetherMaxT++;
+                else g.tetherMaxT = Math.max(0, g.tetherMaxT - 2);
+            } else {
+                g.tetherMaxT = 0;
+            }
+
+            // Auto-navigation pull: ramp in as ships approach PROX
+            if (bothAlive && !g.tetherOverride && dist > PROX * 0.55) {
+                const pull = TETHER_PULL * Math.min(1, (dist - PROX * 0.55) / (PROX * 0.45));
+                ships.forEach((s, idx) => {
+                    if (!s.alive) return;
+                    const other = ships[1 - idx];
+                    const a = Math.atan2(other.y - s.y, other.x - s.x);
+                    s.vx += Math.cos(a) * pull;
+                    s.vy += Math.sin(a) * pull;
+                });
+            }
+
+            // Advance shield rotation each frame
+            g.shieldAng.rx += 0.008;
+            g.shieldAng.ry += 0.013;
+
+            const allied = bothAlive && dist < PROX;
 
             if (sys) sys.setShield(allied);
 
@@ -421,6 +524,45 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
                 }
             });
 
+            // ── Shield wireframes ─────────────────────────────────────────────
+            const { shieldAng, tetherOverride, tetherMaxT } = g;
+            const [ss0, ss1] = ships;
+            const shDist = (ss0.alive && ss1.alive) ? D(ss0, ss1) : 0;
+            const shAllied = ss0.alive && ss1.alive && shDist < PROX;
+
+            if (shAllied) {
+                // Merged dodecahedron centered between ships
+                const mx = (ss0.x + ss1.x) / 2, my = (ss0.y + ss1.y) / 2;
+                const dodecScale = Math.max(28, (shDist / 2 + 32) / _S3);
+                drawWire(ctx, DODEC_V, DODEC_E, shieldAng.rx, shieldAng.ry, dodecScale,
+                    mx, my, isVex ? "#fff" : "#88ddff", isVex ? 0.35 : 0.45, 1);
+            } else {
+                // Individual cube shields on each alive ship
+                ships.forEach(s => {
+                    if (!s.alive) return;
+                    const cubeCol = isVex ? "#fff" : s.glow;
+                    drawWire(ctx, CUBE_V, CUBE_E, shieldAng.rx, shieldAng.ry, 21,
+                        s.x, s.y, cubeCol, 0.5, 1.2);
+                });
+            }
+
+            // ── Tether line ───────────────────────────────────────────────────
+            if (ss0.alive && ss1.alive && !tetherOverride) {
+                const flashingRed = tetherMaxT >= TETHER_FLASH_T && Math.sin(g.frame * Math.PI / 12) > 0;
+                const tetherCol = flashingRed ? "#ff2200" : (isVex ? "rgba(255,255,255,0.35)" : "rgba(120,200,255,0.4)");
+                ctx.save();
+                ctx.strokeStyle = tetherCol;
+                ctx.lineWidth = flashingRed ? 2 : 1;
+                ctx.globalAlpha = 1;
+                ctx.shadowColor = tetherCol; ctx.shadowBlur = flashingRed ? 8 : 4;
+                ctx.setLineDash([10, 14]);
+                ctx.beginPath();
+                ctx.moveTo(ss0.x, ss0.y); ctx.lineTo(ss1.x, ss1.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.restore();
+            }
+
             ctx.restore();
 
             // HUD
@@ -434,6 +576,40 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
                 ctx.fillStyle = hr > 0.5 ? s.col : hr > 0.25 ? "#ffaa00" : "#ff2200";
                 ctx.fillRect(bx, by, bw * hr, bh);
             });
+
+            // Override tether button (appears after 5 s at max tether distance)
+            const { tetherOverride: tOvr, tetherMaxT: tMaxT } = g;
+            const [hs0, hs1] = ships;
+            const showOverrideBtn = hs0.alive && hs1.alive && !tOvr && tMaxT >= TETHER_FLASH_T;
+            const BTN_W = 230, BTN_H = 38;
+            const btnX = CW / 2 - BTN_W / 2, btnY = CH - 102;
+            overrideBtnRef.current = showOverrideBtn ? { x: btnX, y: btnY, w: BTN_W, h: BTN_H } : null;
+            if (showOverrideBtn) {
+                const pulse = 0.65 + 0.35 * Math.abs(Math.sin(g.frame * 0.08));
+                ctx.save();
+                ctx.globalAlpha = pulse;
+                ctx.fillStyle = "rgba(160,0,0,0.8)";
+                ctx.strokeStyle = "#ff3300"; ctx.lineWidth = 2;
+                ctx.shadowColor = "#ff2200"; ctx.shadowBlur = 16;
+                ctx.fillRect(btnX, btnY, BTN_W, BTN_H);
+                ctx.strokeRect(btnX, btnY, BTN_W, BTN_H);
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 13px 'Orbitron',sans-serif";
+                ctx.textAlign = "center";
+                ctx.shadowBlur = 0;
+                ctx.fillText("OVERRIDE TETHER", CW / 2, btnY + 24);
+                ctx.restore();
+            } else if (tOvr && hs0.alive && hs1.alive) {
+                // Show reconnect hint when overridden
+                ctx.save();
+                ctx.globalAlpha = 0.55;
+                ctx.fillStyle = "#88aacc";
+                ctx.font = "12px 'Orbitron',sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("TETHER RELEASED — return to range to reconnect", CW / 2, CH - 74);
+                ctx.restore();
+            }
         }
 
         function loop() {
@@ -449,6 +625,7 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
             window.removeEventListener("resize", resize);
             window.removeEventListener("keydown", onKD);
             window.removeEventListener("keyup", onKU);
+            canvas.removeEventListener("click", onClick);
         };
     }, [players, p1Faction, gfxMode, setPhase]);
 

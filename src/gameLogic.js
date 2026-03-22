@@ -3,6 +3,8 @@ export const EX = WW / 2, EY = 120, ER = 78;
 export const MAX_HP = 100, DRAG = 0.983, TURN = 0.063, THR = 0.20, MAX_SPD = 5.8;
 export const BSPD = 10, BLIFE = 50, FIRE_CD = 14, INV_T = 72;
 export const PROX = 320, ESCAPE_HOLD = 145, RESPAWN_T = 240;
+export const TETHER_FLASH_T = 300; // 5 seconds at ~60fps
+export const TETHER_PULL = 0.035;  // auto-nav force toward ally
 export const SPAWN_INT = 195, MAX_ROC = 75, INIT_ROC = 50;
 
 export const TIERS = [
