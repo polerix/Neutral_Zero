@@ -97,6 +97,7 @@ export class AudioSys {
         g.gain.setValueAtTime(0.15, t);
         g.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
         osc.connect(g); g.connect(this.master);
+        osc.onended = () => { osc.disconnect(); g.disconnect(); };
         osc.start(t); osc.stop(t + 0.15);
     }
     playThrust(vol) {
@@ -114,6 +115,7 @@ export class AudioSys {
         g.gain.setValueAtTime(vol * 0.1, t);
         g.gain.linearRampToValueAtTime(0, t + 0.1);
         osc.connect(filter); filter.connect(g); g.connect(this.master);
+        osc.onended = () => { lfo.disconnect(); lfoGain.disconnect(); osc.disconnect(); filter.disconnect(); g.disconnect(); };
         lfo.start(t); osc.start(t);
         lfo.stop(t + 0.1); osc.stop(t + 0.1);
     }
@@ -130,8 +132,22 @@ export class AudioSys {
         g.gain.setValueAtTime(0.6, t);
         g.gain.exponentialRampToValueAtTime(0.01, t + 0.8);
         osc.connect(filter); filter.connect(g); g.connect(this.master);
+        osc.onended = () => { lfo.disconnect(); lfoGain.disconnect(); osc.disconnect(); filter.disconnect(); g.disconnect(); };
         lfo.start(t); osc.start(t);
         lfo.stop(t + 0.8); osc.stop(t + 0.8);
+    }
+    playShield() {
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, t);
+        osc.frequency.exponentialRampToValueAtTime(880, t + 0.2);
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0.2, t);
+        g.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+        osc.connect(g); g.connect(this.master);
+        osc.onended = () => { osc.disconnect(); g.disconnect(); };
+        osc.start(t); osc.stop(t + 0.2);
     }
     setShield(active) {
         const t = this.ctx.currentTime;
