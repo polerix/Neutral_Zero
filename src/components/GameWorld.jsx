@@ -12,6 +12,12 @@ const REAL_THR = THR * 0.65;
 const REAL_MAX_SPD = MAX_SPD * 0.75;
 const REAL_DRAG = 0.992; // Less drag for more space feel
 
+const VEX_COL = "#e8ffdf";
+const ROCK_FILL_COLS = ["#38342e", "#4a4642", "#5e5a56"];
+const ROCK_STROKE_COLS = ["#5c5852", "#787470", "#9a9896"];
+const CTRL1 = { rL: "KeyA", rR: "KeyD", thr: "KeyW", fire: "Space" };
+const CTRL2 = { rL: "ArrowLeft", rR: "ArrowRight", thr: "ArrowUp", fire: "ShiftRight" };
+
 // ── 3-D shield geometry ───────────────────────────────────────────────────────
 const _PHI = (1 + Math.sqrt(5)) / 2, _IP = 1 / _PHI, _S3 = Math.sqrt(3);
 
@@ -57,9 +63,9 @@ function drawWire(ctx, verts, edges, rx, ry, scale, cx, cy, col, alpha, lw) {
     ctx.save();
     ctx.strokeStyle = col; ctx.globalAlpha = alpha; ctx.lineWidth = lw;
     ctx.shadowColor = col; ctx.shadowBlur = lw * 4;
-    edges.forEach(([a, b]) => {
-        ctx.beginPath(); ctx.moveTo(pts[a][0], pts[a][1]); ctx.lineTo(pts[b][0], pts[b][1]); ctx.stroke();
-    });
+    ctx.beginPath();
+    edges.forEach(([a, b]) => { ctx.moveTo(pts[a][0], pts[a][1]); ctx.lineTo(pts[b][0], pts[b][1]); });
+    ctx.stroke();
     ctx.restore();
 }
 
@@ -78,7 +84,6 @@ function vpEdge(sx, sy, CW, CH, pad) {
 }
 // Off-screen directional arrow at (ex,ey) pointing at angle ang; dashed = event horizon
 function navArrow(ctx, ex, ey, ang, dist, dashed, col) {
-    // Arrow body
     ctx.save();
     ctx.translate(ex, ey); ctx.rotate(ang);
     ctx.strokeStyle = col; ctx.fillStyle = col;
@@ -100,6 +105,23 @@ function navArrow(ctx, ex, ey, ang, dist, dashed, col) {
     ctx.restore();
 }
 
+// Off-screen arrow or on-screen distance label for a nav target
+function renderNavIndicator(ctx, sx, sy, label, dashed, col, CW, CH, PAD, isVex, labelOffY) {
+    if (sx < -30 || sx > CW + 30 || sy < -30 || sy > CH + 30) {
+        const [ex, ey] = vpEdge(sx, sy, CW, CH, PAD);
+        navArrow(ctx, ex, ey, Math.atan2(sy - CH / 2, sx - CW / 2), label, dashed, col);
+    } else {
+        ctx.save();
+        ctx.fillStyle = col; ctx.globalAlpha = 0.9;
+        ctx.font = "9px 'Orbitron',sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        if (!isVex) { ctx.shadowColor = col; ctx.shadowBlur = 6; }
+        ctx.fillText(String(label), sx, sy - labelOffY);
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+}
+
 export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
     const cvs = useRef(null);
     const gfxCvs = useRef(null);
@@ -108,9 +130,6 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
     const audioRef = useRef(null);
     const raf = useRef(null);
     const overrideBtnRef = useRef(null);
-
-    const CTRL1 = { rL: "KeyA", rR: "KeyD", thr: "KeyW", fire: "Space" };
-    const CTRL2 = { rL: "ArrowLeft", rR: "ArrowRight", thr: "ArrowUp", fire: "ShiftRight" };
 
     function getShipsState() {
         const startX = WW / 2; const startY = WH - 230;
@@ -148,12 +167,19 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
         const canvas = cvs.current;
         const overlay = gfxCvs.current;
         let CW = 0, CH = 0;
+        let scanCanvas = null;
 
         function resize() {
             CW = canvas.width = canvas.offsetWidth;
             CH = canvas.height = canvas.offsetHeight;
             overlay.width = CW;
             overlay.height = CH;
+            // Pre-render Vectrex scanline pattern
+            scanCanvas = document.createElement('canvas');
+            scanCanvas.width = CW; scanCanvas.height = CH;
+            const sc = scanCanvas.getContext('2d');
+            sc.fillStyle = "rgba(0,0,0,0.13)";
+            for (let sy2 = 0; sy2 < CH; sy2 += 2) sc.fillRect(0, sy2, CW, 1);
         }
         resize();
         window.addEventListener("resize", resize);
@@ -218,8 +244,8 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
             }
 
             // Advance shield rotation each frame
-            g.shieldAng.rx += 0.008;
-            g.shieldAng.ry += 0.013;
+            g.shieldAng.rx = (g.shieldAng.rx + 0.008) % (Math.PI * 2);
+            g.shieldAng.ry = (g.shieldAng.ry + 0.013) % (Math.PI * 2);
 
             const allied = bothAlive && dist < PROX;
 
@@ -449,7 +475,6 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
             const octx = gfxCvs.current.getContext("2d");
             const isVex = gfxMode === "vectrex";
             const isRtx = gfxMode === "rtx";
-            const VEX_COL = "#e8ffdf";
             const g = G.current;
             const { ships, bullets, rocks, parts, cam, escT, frame, buoys } = g;
 
@@ -589,16 +614,13 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
                 if (!isVex) {
                     const spd2 = r.vx * r.vx + r.vy * r.vy;
                     if (spd2 > 0.08) {
-                        for (let t = 3; t >= 1; t--) {
-                            ctx.save();
-                            ctx.translate(r.x - r.vx * t, r.y - r.vy * t); ctx.rotate(r.rot - r.spin * t);
-                            ctx.beginPath();
-                            r.pts.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py));
-                            ctx.closePath();
-                            ctx.fillStyle = ["#38342e","#4a4642","#5e5a56"][r.tier];
-                            ctx.globalAlpha = 0.055 * (4 - t);
-                            ctx.fill(); ctx.restore();
-                        }
+                        ctx.save();
+                        ctx.translate(r.x - r.vx * 2, r.y - r.vy * 2); ctx.rotate(r.rot - r.spin * 2);
+                        ctx.beginPath();
+                        r.pts.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py));
+                        ctx.closePath();
+                        ctx.fillStyle = ROCK_FILL_COLS[r.tier]; ctx.globalAlpha = 0.22;
+                        ctx.fill(); ctx.restore();
                         ctx.globalAlpha = 1;
                     }
                 }
@@ -609,8 +631,8 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
                 if (isVex) {
                     ctx.strokeStyle = VEX_COL; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.7; ctx.stroke(); ctx.globalAlpha = 1;
                 } else {
-                    ctx.fillStyle = ["#38342e", "#4a4642", "#5e5a56"][r.tier]; ctx.fill();
-                    ctx.strokeStyle = ["#5c5852", "#787470", "#9a9896"][r.tier]; ctx.lineWidth = isRtx ? 2 : 1.5; ctx.stroke();
+                    ctx.fillStyle = ROCK_FILL_COLS[r.tier]; ctx.fill();
+                    ctx.strokeStyle = ROCK_STROKE_COLS[r.tier]; ctx.lineWidth = isRtx ? 2 : 1.5; ctx.stroke();
                 }
                 ctx.restore();
             });
@@ -795,9 +817,8 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
 
             // ── Vectrex CRT overlay ───────────────────────────────────────────
             if (isVex) {
-                // Scanlines
-                ctx.fillStyle = "rgba(0,0,0,0.13)";
-                for (let sy2 = 0; sy2 < CH; sy2 += 2) ctx.fillRect(0, sy2, CW, 1);
+                // Scanlines (pre-rendered offscreen)
+                if (scanCanvas) ctx.drawImage(scanCanvas, 0, 0);
                 // Vignette
                 const vig = ctx.createRadialGradient(CW / 2, CH / 2, CH * 0.22, CW / 2, CH / 2, CH * 0.72);
                 vig.addColorStop(0, "rgba(0,0,0,0)");
@@ -830,9 +851,7 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
                     // Micro-label
                     ctx.fillStyle = s.col + "77";
                     ctx.font = "7px 'Orbitron',sans-serif";
-                    ctx.letterSpacing = "2px";
                     ctx.fillText("PILOT INTEGRITY", lft ? bx : bx + bw, by - 26);
-                    ctx.letterSpacing = "0px";
 
                     // Ship name + underline nameplate
                     ctx.fillStyle = s.col;
@@ -877,52 +896,18 @@ export default function GameWorld({ players, p1Faction, gfxMode, setPhase }) {
 
             // ── Navigation indicators (screen space) ─────────────────────────
             if (navAlive.length > 0) {
-                const wpCol  = isVex ? VEX_COL : "#ffcc44";
-                const ehCol  = isVex ? VEX_COL : "#ffcc44";
+                const navCol = isVex ? VEX_COL : "#ffcc44";
                 const PAD = 42; // px from viewport edge
 
-                // — Next waypoint —
                 if (nextWP) {
                     const distWP = Math.round(Math.hypot(nextWP.x - navCX, nextWP.y - navCY));
                     const [wpSX, wpSY] = w2s(nextWP.x, nextWP.y, cam, CW, CH);
-                    const wpOff = wpSX < -30 || wpSX > CW + 30 || wpSY < -30 || wpSY > CH + 30;
-                    if (wpOff) {
-                        // Solid edge arrow for waypoint
-                        const [ex, ey] = vpEdge(wpSX, wpSY, CW, CH, PAD);
-                        navArrow(ctx, ex, ey, Math.atan2(wpSY - CH / 2, wpSX - CW / 2), distWP, false, wpCol);
-                    } else {
-                        // On-screen: distance label above the reticle
-                        const [wpSXl, wpSYl] = w2s(nextWP.x, nextWP.y, cam, CW, CH);
-                        ctx.save();
-                        ctx.fillStyle = wpCol; ctx.globalAlpha = 0.9;
-                        ctx.font = "9px 'Orbitron',sans-serif";
-                        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-                        if (!isVex) { ctx.shadowColor = wpCol; ctx.shadowBlur = 6; }
-                        ctx.fillText(String(distWP), wpSXl, wpSYl - (24 + 12) * cam.z);
-                        ctx.shadowBlur = 0;
-                        ctx.restore();
-                    }
+                    renderNavIndicator(ctx, wpSX, wpSY, distWP, false, navCol, CW, CH, PAD, isVex, (24 + 12) * cam.z);
                 }
 
-                // — Event horizon —
                 const distEH = Math.max(0, Math.round(Math.hypot(EX - navCX, EY - navCY) - ER));
                 const [ehSX, ehSY] = w2s(EX, EY, cam, CW, CH);
-                const ehOff = ehSX < -30 || ehSX > CW + 30 || ehSY < -30 || ehSY > CH + 30;
-                if (ehOff) {
-                    // Dashed edge arrow for event horizon
-                    const [ex, ey] = vpEdge(ehSX, ehSY, CW, CH, PAD);
-                    navArrow(ctx, ex, ey, Math.atan2(ehSY - CH / 2, ehSX - CW / 2), distEH, true, ehCol);
-                } else {
-                    // On-screen: distance label above the outermost ring
-                    ctx.save();
-                    ctx.fillStyle = ehCol; ctx.globalAlpha = 0.85;
-                    ctx.font = "9px 'Orbitron',sans-serif";
-                    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-                    if (!isVex) { ctx.shadowColor = ehCol; ctx.shadowBlur = 6; }
-                    ctx.fillText(distEH === 0 ? "ENTER" : String(distEH), ehSX, ehSY - (ER * 1.5 + 10) * cam.z);
-                    ctx.shadowBlur = 0;
-                    ctx.restore();
-                }
+                renderNavIndicator(ctx, ehSX, ehSY, distEH === 0 ? "ENTER" : distEH, true, navCol, CW, CH, PAD, isVex, (ER * 1.5 + 10) * cam.z);
             }
 
             // Override tether button (appears after 5 s at max tether distance)
