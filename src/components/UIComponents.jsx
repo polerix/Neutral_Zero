@@ -3,12 +3,21 @@ import React from 'react';
 export const Btn = ({ col = "#fff", bord, onClick, children }) => (
     <button onClick={onClick} style={{
         background: "none", border: `2px solid ${bord || col + "99"}`, color: col,
-        padding: "14px 54px", fontSize: 16, fontWeight: 700, letterSpacing: 4, cursor: "pointer",
+        padding: "14px 54px", fontSize: 16, fontWeight: 700, letterSpacing: "0.22em", cursor: "pointer",
         textTransform: "uppercase", fontFamily: "'Orbitron', sans-serif",
-        transition: "all .2s"
+        transition: "all .2s", borderRadius: 0,
+        textShadow: `0 0 14px ${col}55`
     }}
-        onMouseEnter={e => { e.currentTarget.style.background = col + "18"; e.currentTarget.style.borderColor = col; }}
-        onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = bord || col + "99"; }}>
+        onMouseEnter={e => {
+            e.currentTarget.style.background = col + "1a";
+            e.currentTarget.style.borderColor = col;
+            e.currentTarget.style.boxShadow = `0 0 22px ${col}44, inset 0 0 12px ${col}11`;
+        }}
+        onMouseLeave={e => {
+            e.currentTarget.style.background = "none";
+            e.currentTarget.style.borderColor = bord || col + "99";
+            e.currentTarget.style.boxShadow = "none";
+        }}>
         {children}
     </button>
 );
@@ -25,7 +34,13 @@ export const ToggleBtn = ({ active, col, onClick, children }) => (
     </button>
 );
 
-export const Sep = () => <div style={{ width: 100, height: 1, background: "linear-gradient(90deg,#ff5500,#00ddff)", margin: "18px auto" }} />;
+export const Sep = () => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "18px auto", width: 260 }}>
+        <div style={{ flex: 1, height: 1, background: "linear-gradient(90deg,transparent,#ff5500)" }} />
+        <div style={{ width: 4, height: 4, background: "#ff8800", transform: "rotate(45deg)", flexShrink: 0 }} />
+        <div style={{ flex: 1, height: 1, background: "linear-gradient(90deg,#00ddff,transparent)" }} />
+    </div>
+);
 
 export const OverlayStyle = {
     position: "absolute", inset: 0, display: "flex", flexDirection: "column",

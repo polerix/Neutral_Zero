@@ -3,6 +3,8 @@ export const EX = WW / 2, EY = 120, ER = 78;
 export const MAX_HP = 100, DRAG = 0.983, TURN = 0.063, THR = 0.20, MAX_SPD = 5.8;
 export const BSPD = 10, BLIFE = 50, FIRE_CD = 14, INV_T = 72;
 export const PROX = 320, ESCAPE_HOLD = 145, RESPAWN_T = 240;
+export const TETHER_FLASH_T = 300; // 5 seconds at ~60fps
+export const TETHER_PULL = 0.035;  // auto-nav force toward ally
 export const SPAWN_INT = 195, MAX_ROC = 75, INIT_ROC = 50;
 
 export const TIERS = [
@@ -97,6 +99,7 @@ export class AudioSys {
         g.gain.setValueAtTime(0.15, t);
         g.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
         osc.connect(g); g.connect(this.master);
+        osc.onended = () => { osc.disconnect(); g.disconnect(); };
         osc.start(t); osc.stop(t + 0.15);
     }
     playThrust(vol) {
@@ -114,6 +117,7 @@ export class AudioSys {
         g.gain.setValueAtTime(vol * 0.1, t);
         g.gain.linearRampToValueAtTime(0, t + 0.1);
         osc.connect(filter); filter.connect(g); g.connect(this.master);
+        osc.onended = () => { lfo.disconnect(); lfoGain.disconnect(); osc.disconnect(); filter.disconnect(); g.disconnect(); };
         lfo.start(t); osc.start(t);
         lfo.stop(t + 0.1); osc.stop(t + 0.1);
     }
@@ -130,8 +134,22 @@ export class AudioSys {
         g.gain.setValueAtTime(0.6, t);
         g.gain.exponentialRampToValueAtTime(0.01, t + 0.8);
         osc.connect(filter); filter.connect(g); g.connect(this.master);
+        osc.onended = () => { lfo.disconnect(); lfoGain.disconnect(); osc.disconnect(); filter.disconnect(); g.disconnect(); };
         lfo.start(t); osc.start(t);
         lfo.stop(t + 0.8); osc.stop(t + 0.8);
+    }
+    playShield() {
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, t);
+        osc.frequency.exponentialRampToValueAtTime(880, t + 0.2);
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0.2, t);
+        g.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+        osc.connect(g); g.connect(this.master);
+        osc.onended = () => { osc.disconnect(); g.disconnect(); };
+        osc.start(t); osc.stop(t + 0.2);
     }
     setShield(active) {
         const t = this.ctx.currentTime;
