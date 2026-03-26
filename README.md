@@ -24,7 +24,7 @@ The Vykos and the Raelun have been at war for ninety years. Stranded in a rogue 
 This project is automatically deployed to GitHub Pages via GitHub Actions, surfacing to the web. 💧
 - **Source Branch**: `main` 🫧
 - **Deployment Workflow**: `.github/workflows/deploy.yml` 🐚
-- **Live Site**: [https://polerix.github.io/Neutral_Zero/](https://polerix.github.io/Neutral_Zero/) 🌊
+- **Live Site**: [https://polerix.github.io/neutral-zero/](https://polerix.github.io/neutral-zero/) 🌊
 
 ## 🐚 Development
 Built with **React + Vite**, flowing with precision. 💧
